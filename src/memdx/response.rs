@@ -2,10 +2,12 @@ use crate::memdx::auth_mechanism::AuthMechanism;
 use crate::memdx::client::ClientResponse;
 use crate::memdx::error::Error;
 use crate::memdx::hello_feature::HelloFeature;
-use crate::memdx::ops_core::decode_error;
+use crate::memdx::ops_core::OpsCore;
+use crate::memdx::ops_crud::OpsCrud;
 use crate::memdx::status::Status;
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
+use std::time::Duration;
 
 pub trait TryFromClientResponse: Sized {
     fn try_from(resp: ClientResponse) -> Result<Self, Error>;
@@ -21,7 +23,7 @@ impl TryFromClientResponse for HelloResponse {
         let packet = resp.packet();
         let status = packet.status();
         if status != Status::Success {
-            return Err(decode_error(packet));
+            return Err(OpsCore::decode_error(packet));
         }
 
         let mut features: Vec<HelloFeature> = Vec::new();
@@ -53,7 +55,7 @@ impl TryFromClientResponse for GetErrorMapResponse {
         let packet = resp.packet();
         let status = packet.status();
         if status != Status::Success {
-            return Err(decode_error(packet));
+            return Err(OpsCore::decode_error(packet));
         }
 
         // TODO: Clone?
@@ -72,7 +74,7 @@ impl TryFromClientResponse for SelectBucketResponse {
         let packet = resp.packet();
         let status = packet.status();
         if status != Status::Success {
-            return Err(decode_error(packet));
+            return Err(OpsCore::decode_error(packet));
         }
 
         Ok(SelectBucketResponse {})
@@ -99,7 +101,7 @@ impl TryFromClientResponse for SASLAuthResponse {
         }
 
         if status != Status::Success {
-            return Err(decode_error(packet));
+            return Err(OpsCore::decode_error(packet));
         }
 
         Ok(SASLAuthResponse {
@@ -121,7 +123,7 @@ impl TryFromClientResponse for SASLStepResponse {
         let packet = resp.packet();
         let status = packet.status();
         if status != Status::Success {
-            return Err(decode_error(packet));
+            return Err(OpsCore::decode_error(packet));
         }
 
         Ok(SASLStepResponse {
@@ -142,7 +144,7 @@ impl TryFromClientResponse for SASLListMechsResponse {
         let packet = resp.packet();
         let status = packet.status();
         if status != Status::Success {
-            return Err(decode_error(packet));
+            return Err(OpsCore::decode_error(packet));
         }
 
         // TODO: Clone?
@@ -169,4 +171,61 @@ impl TryFromClientResponse for SASLListMechsResponse {
 pub struct BootstrapResult {
     pub hello: Option<HelloResponse>,
     pub error_map: Option<GetErrorMapResponse>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct MutationToken {
+    pub vbuuid: u64,
+    pub seqno: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct SetResponse {
+    pub cas: u64,
+    pub mutation_token: MutationToken,
+    pub server_duration: Option<Duration>,
+}
+
+impl TryFromClientResponse for SetResponse {
+    fn try_from(resp: ClientResponse) -> Result<Self, Error> {
+        let packet = resp.packet();
+        let status = packet.status();
+
+        if status == Status::TooBig {
+            return Err(Error::TooBig);
+        } else if status == Status::Locked {
+            return Err(Error::Locked);
+        } else if status == Status::KeyExists {
+            return Err(Error::KeyExists);
+        } else if status != Status::Success {
+            return Err(Error::Unknown(
+                OpsCrud::decode_common_error(resp.packet()).to_string(),
+            ));
+        }
+
+        let mut_token = if let Some(extras) = packet.extras() {
+            if extras.len() != 16 {
+                return Err(Error::Protocol("Bad extras length".to_string()));
+            }
+
+            let mut extras = Cursor::new(extras);
+
+            MutationToken {
+                vbuuid: extras
+                    .read_u64::<BigEndian>()
+                    .map_err(|e| Error::Unknown(e.to_string()))?,
+                seqno: extras
+                    .read_u64::<BigEndian>()
+                    .map_err(|e| Error::Unknown(e.to_string()))?,
+            }
+        } else {
+            return Err(Error::Protocol("Bad extras length".to_string()));
+        };
+
+        Ok(SetResponse {
+            cas: packet.cas().unwrap_or_default(),
+            mutation_token: mut_token,
+            server_duration: None,
+        })
+    }
 }

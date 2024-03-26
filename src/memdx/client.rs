@@ -234,8 +234,8 @@ impl Dispatcher for Client {
     async fn dispatch(&mut self, mut packet: RequestPacket) -> Result<ClientPendingOp> {
         let (response_tx, response_rx) = mpsc::channel(1);
         let opaque = self.register_handler(Arc::new(response_tx)).await;
-        packet = packet.set_opaque(opaque);
-        let op_code = packet.op_code();
+        packet.opaque = Some(opaque);
+        let op_code = packet.op_code;
 
         match self.writer.send(packet).await {
             Ok(_) => Ok(ClientPendingOp::new(
