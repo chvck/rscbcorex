@@ -1,5 +1,6 @@
 use log::warn;
-use tokio::time::Instant;
+use tokio::select;
+use tokio::time::{Instant, timeout_at};
 
 use crate::memdx::client::Result;
 use crate::memdx::dispatcher::Dispatcher;
@@ -49,7 +50,6 @@ pub struct BootstrapOptions {
     pub get_error_map: Option<GetErrorMapRequest>,
     pub auth: Option<SASLAuthAutoOptions>,
     pub select_bucket: Option<SelectBucketRequest>,
-    pub deadline: Instant,
 }
 
 impl OpBootstrap {

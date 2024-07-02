@@ -261,7 +261,7 @@ mod tests {
     use std::ops::Add;
     use std::time::Duration;
 
-    use tokio::time::Instant;
+    use tokio::time::{Instant, timeout_at};
 
     use crate::memdx::auth_mechanism::AuthMechanism::{ScramSha1, ScramSha256, ScramSha512};
     use crate::memdx::client::{Client, Connection};
@@ -292,7 +292,7 @@ mod tests {
 
         let instant = Instant::now().add(Duration::new(7, 0));
 
-        let bootstrap_result = OpBootstrap::bootstrap(
+        let fut = OpBootstrap::bootstrap(
             OpsCore {},
             &mut client,
             BootstrapOptions {
@@ -318,18 +318,21 @@ mod tests {
                 }),
                 get_error_map: Some(GetErrorMapRequest { version: 2 }),
                 auth: Some(SASLAuthAutoOptions {
-                    username,
-                    password,
+                    username: username.clone(),
+                    password: password.clone(),
                     enabled_mechs: vec![ScramSha512, ScramSha256, ScramSha1],
                 }),
                 select_bucket: Some(SelectBucketRequest {
                     bucket_name: "default".into(),
                 }),
-                deadline: instant,
             },
-        )
-        .await
-        .unwrap();
+        );
+
+        let bootstrap_result = timeout_at(Instant::now().add(Duration::new(7, 0)), fut)
+            .await
+            .unwrap()
+            .unwrap();
+
         dbg!(&bootstrap_result.hello);
 
         let hello_result = bootstrap_result.hello.unwrap();
